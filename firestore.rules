@@ -1,0 +1,63 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // School Management & Smart Exam System Security Rules
+    // Grants read/write access for real-time synchronization across mobile and desktop devices
+
+    match /users/{userId} {
+      allow read, write: if true;
+    }
+
+    match /schoolSettings/{docId} {
+      allow read, write: if true;
+    }
+
+    match /auditLogs/{logId} {
+      allow read, write: if true;
+    }
+
+    match /exams/{examId} {
+      allow read, write: if true;
+
+      match /questions/{questionId} {
+        allow read, write: if true;
+      }
+    }
+
+    match /submissions/{submissionId} {
+      allow read, write: if true;
+    }
+
+    match /liveLessons/{lessonId} {
+      allow read, write: if true;
+
+      match /chat/{chatId} {
+        allow read, write: if true;
+      }
+
+      match /hands/{handId} {
+        allow read, write: if true;
+      }
+    }
+
+    match /live_lessons/{lessonId} {
+      allow read, write: if true;
+
+      match /chat/{chatId} {
+        allow read, write: if true;
+      }
+
+      match /hands/{handId} {
+        allow read, write: if true;
+      }
+    }
+
+    match /notifications/{notifId} {
+      allow read, write: if true;
+    }
+
+    match /test/{docId} {
+      allow read, write: if true;
+    }
+  }
+}

@@ -1,0 +1,233 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Represents an administrator, teacher, or student in the secondary school system",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique user ID / auth UID"
+        },
+        "username": {
+          "type": "string",
+          "description": "School username for login"
+        },
+        "name": {
+          "type": "string",
+          "description": "Full name of the user"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Email address"
+        },
+        "role": {
+          "type": "string",
+          "enum": ["admin", "teacher", "student"],
+          "description": "Access control role"
+        },
+        "grade": {
+          "type": "string",
+          "description": "Secondary school grade level, e.g., Grade 9, Grade 10, Grade 11, Grade 12"
+        },
+        "section": {
+          "type": "string",
+          "description": "Class section, e.g., Section A, Section B"
+        },
+        "studentId": {
+          "type": "string",
+          "description": "Secondary school student registration number"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["active", "inactive"],
+          "description": "Account activation status"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO timestamp of account creation"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "ISO timestamp of last update"
+        }
+      },
+      "required": ["id", "username", "name", "email", "role", "status"]
+    },
+    "Exam": {
+      "title": "Exam",
+      "description": "Online examination created and managed by teachers",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique examination identifier"
+        },
+        "title": {
+          "type": "string",
+          "description": "Title of the examination"
+        },
+        "subject": {
+          "type": "string",
+          "description": "Academic subject, e.g., Physics, Biology, Chemistry, Mathematics, English"
+        },
+        "grade": {
+          "type": "string",
+          "description": "Target grade level"
+        },
+        "section": {
+          "type": "string",
+          "description": "Target section or All"
+        },
+        "teacherId": {
+          "type": "string",
+          "description": "Teacher UID who authored the exam"
+        },
+        "teacherName": {
+          "type": "string",
+          "description": "Teacher display name"
+        },
+        "durationMinutes": {
+          "type": "number",
+          "description": "Time limit in minutes"
+        },
+        "totalMarks": {
+          "type": "number",
+          "description": "Maximum marks attainable"
+        },
+        "instructions": {
+          "type": "string",
+          "description": "Candidate examination instructions"
+        },
+        "scheduledDate": {
+          "type": "string",
+          "description": "Date of the examination YYYY-MM-DD"
+        },
+        "startTime": {
+          "type": "string",
+          "description": "Exam start time HH:mm"
+        },
+        "endTime": {
+          "type": "string",
+          "description": "Exam end time HH:mm"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["draft", "published", "completed", "archived"],
+          "description": "Lifecycle state of the examination"
+        },
+        "resultsReleased": {
+          "type": "boolean",
+          "description": "Whether students are permitted to view scores and answer keys"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Update timestamp"
+        }
+      },
+      "required": ["id", "title", "subject", "grade", "teacherId", "durationMinutes", "totalMarks", "status"]
+    },
+    "ExamSubmission": {
+      "title": "ExamSubmission",
+      "description": "Student exam attempt and answers",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique submission ID: examId_studentId"
+        },
+        "examId": {
+          "type": "string",
+          "description": "Reference to the Exam"
+        },
+        "studentId": {
+          "type": "string",
+          "description": "Student UID"
+        },
+        "studentName": {
+          "type": "string",
+          "description": "Student display name"
+        },
+        "grade": {
+          "type": "string",
+          "description": "Student grade"
+        },
+        "section": {
+          "type": "string",
+          "description": "Student class section"
+        },
+        "startedAt": {
+          "type": "string",
+          "description": "Start timestamp"
+        },
+        "submittedAt": {
+          "type": "string",
+          "description": "Submission timestamp"
+        },
+        "score": {
+          "type": "number",
+          "description": "Total awarded score"
+        },
+        "objectiveScore": {
+          "type": "number",
+          "description": "Calculated score for auto-graded objective questions"
+        },
+        "manualScore": {
+          "type": "number",
+          "description": "Awarded score for teacher-evaluated short answers"
+        },
+        "totalPossible": {
+          "type": "number",
+          "description": "Maximum marks possible"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["in_progress", "submitted", "graded"],
+          "description": "Submission lifecycle state"
+        },
+        "isAutoSubmitted": {
+          "type": "boolean",
+          "description": "Whether automatic submission was triggered by timer expiry"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Update timestamp"
+        }
+      },
+      "required": ["id", "examId", "studentId", "status"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": {
+        "$ref": "User"
+      },
+      "description": "User profiles with role permissions"
+    },
+    "/exams/{examId}": {
+      "schema": {
+        "$ref": "Exam"
+      },
+      "description": "Secondary school examinations collection"
+    },
+    "/exams/{examId}/questions/{questionId}": {
+      "schema": "Question",
+      "description": "Questions sub-collection within each exam"
+    },
+    "/submissions/{submissionId}": {
+      "schema": {
+        "$ref": "ExamSubmission"
+      },
+      "description": "Student exam submissions and scores"
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "Smart Exam System",
+  "description": "A modern, responsive secondary school online examination management platform with AI PDF extraction, role-based dashboards, and automated grading.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
