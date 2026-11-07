@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import confetti from 'canvas-confetti';
 import { Exam, Question, ExamSubmission } from '../../types/index.ts';
 import { useAuth } from '../../context/AuthContext.tsx';
+import { auth } from '../../lib/firebase.ts';
 import { 
   Clock, 
   CheckCircle, 
@@ -11,6 +12,7 @@ import {
   ChevronRight, 
   Send, 
   ShieldCheck, 
+  ShieldAlert,
   HelpCircle,
   BookOpen
 } from 'lucide-react';
@@ -23,7 +25,7 @@ interface ExamTakerProps {
 
 export const ExamTaker: React.FC<ExamTakerProps> = ({ exam, onFinish, onCancel }) => {
   const { currentUser, submitExamAnswers, theme } = useAuth();
-  const questions: Question[] = exam.questions || [];
+  const [activeQuestions, setActiveQuestions] = useState<Question[]>(exam.questions || []);
 
   const [currentIndex, setCurrentIndex] = useState(0);
   const [answers, setAnswers] = useState<Record<string, string>>({});
@@ -32,9 +34,97 @@ export const ExamTaker: React.FC<ExamTakerProps> = ({ exam, onFinish, onCancel }
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [autoSubmittedNotice, setAutoSubmittedNotice] = useState(false);
+  const [securityWarnings, setSecurityWarnings] = useState<number>(0);
+  const [securityBanner, setSecurityBanner] = useState<string | null>(null);
 
+  const questions = activeQuestions;
   const currentQ = questions[currentIndex];
   const answeredCount = Object.keys(answers).filter((k) => (answers[k] || '').trim().length > 0).length;
+
+  // 1. Initialize server exam attempt on mount
+  useEffect(() => {
+    let isMounted = true;
+    const initServerAttempt = async () => {
+      try {
+        const token = await auth.currentUser?.getIdToken();
+        const res = await fetch(`/api/exams/${exam.id}/start`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (isMounted) {
+            if (Array.isArray(data.questions) && data.questions.length > 0) {
+              setActiveQuestions(data.questions);
+            }
+            if (data.deadline) {
+              const deadlineTime = new Date(data.deadline).getTime();
+              const remaining = Math.max(0, Math.floor((deadlineTime - Date.now()) / 1000));
+              setTimeLeftSeconds(remaining);
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('Could not register attempt with server start endpoint:', err);
+      }
+    };
+
+    initServerAttempt();
+    return () => {
+      isMounted = false;
+    };
+  }, [exam.id]);
+
+  // 2. Anti-cheating listeners: tab switches and visibility changes
+  useEffect(() => {
+    const logSecurityEvent = async (eventType: string, details: string) => {
+      setSecurityWarnings((prev) => {
+        const next = prev + 1;
+        setSecurityBanner(`Warning: Tab change detected! Incident #${next} recorded for academic integrity.`);
+        setTimeout(() => setSecurityBanner(null), 5000);
+        return next;
+      });
+
+      try {
+        const token = await auth.currentUser?.getIdToken();
+        await fetch(`/api/exams/${exam.id}/log-event`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({
+            eventType,
+            details,
+            timestamp: new Date().toISOString(),
+          }),
+        });
+      } catch (e) {
+        console.warn('Failed to log security event:', e);
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        logSecurityEvent('tab_hidden', 'Candidate switched away from examination tab');
+      }
+    };
+
+    const handleWindowBlur = () => {
+      logSecurityEvent('window_blur', 'Candidate clicked outside examination window');
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('blur', handleWindowBlur);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('blur', handleWindowBlur);
+    };
+  }, [exam.id]);
 
   // Real-time countdown timer
   useEffect(() => {
@@ -125,8 +215,15 @@ export const ExamTaker: React.FC<ExamTakerProps> = ({ exam, onFinish, onCancel }
           </div>
         </div>
 
-        {/* Center Timer */}
+        {/* Center Timer & Integrity Badge */}
         <div className="flex items-center gap-3">
+          {securityWarnings > 0 && (
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-amber-50 text-amber-800 dark:bg-amber-950 dark:text-amber-200 border border-amber-300 text-xs font-semibold">
+              <ShieldAlert className="w-3.5 h-3.5 text-amber-600" />
+              <span>Incidents: {securityWarnings}</span>
+            </div>
+          )}
+
           <div
             className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl font-mono text-sm font-bold border transition-all ${
               isCriticalTime
@@ -150,6 +247,12 @@ export const ExamTaker: React.FC<ExamTakerProps> = ({ exam, onFinish, onCancel }
           </button>
         </div>
       </header>
+      {securityBanner && (
+        <div className="bg-amber-500 text-slate-900 font-bold px-4 py-2 text-center text-xs flex items-center justify-center gap-2 shadow-sm animate-bounce">
+          <ShieldAlert className="w-4 h-4 text-slate-950" />
+          <span>{securityBanner}</span>
+        </div>
+      )}
 
       {/* Main Workspace */}
       <div className="flex-1 flex overflow-hidden">

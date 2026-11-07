@@ -16,6 +16,7 @@ export interface ParticipantInfo {
   screenTrackId?: string;
   canSpeak: boolean;
   hasHandRaised: boolean;
+  cameraPermission?: 'none' | 'requested' | 'approved' | 'rejected';
   joinedAt: string;
   lastActiveAt?: string;
 }
@@ -49,6 +50,16 @@ interface RoomData {
     section: string;
     timestamp: string;
     status: 'pending' | 'approved' | 'declined' | 'lowered';
+  }>;
+  cameraRequests: Array<{
+    id: string;
+    lessonId: string;
+    studentId: string;
+    studentName: string;
+    grade: string;
+    section: string;
+    timestamp: string;
+    status: 'pending' | 'approved' | 'rejected';
   }>;
   announcements: Array<{
     id: string;
@@ -99,6 +110,7 @@ export function setupLiveSignaling(httpServer: HttpServer) {
                 peers: new Map(),
                 chatMessages: [],
                 raisedHands: [],
+                cameraRequests: [],
                 announcements: [],
                 createdAt: new Date().toISOString(),
               });
@@ -117,7 +129,7 @@ export function setupLiveSignaling(httpServer: HttpServer) {
               grade: user.grade,
               section: user.section,
               isAudioMuted: msg.isAudioMuted ?? (user.role === 'student'),
-              isVideoOff: msg.isVideoOff ?? false,
+              isVideoOff: msg.isVideoOff ?? (user.role === 'student'),
               isScreenSharing: existingPeer?.info.isScreenSharing ?? (msg.isScreenSharing ?? false),
               screenStreamId: existingPeer?.info.screenStreamId ?? msg.screenStreamId,
               cameraStreamId: existingPeer?.info.cameraStreamId ?? msg.cameraStreamId,
@@ -125,6 +137,7 @@ export function setupLiveSignaling(httpServer: HttpServer) {
               screenTrackId: existingPeer?.info.screenTrackId ?? msg.screenTrackId,
               canSpeak: user.role === 'teacher' || user.role === 'director' || user.role === 'super_admin' || (existingPeer?.info.canSpeak ?? false),
               hasHandRaised: existingPeer?.info.hasHandRaised ?? false,
+              cameraPermission: user.role === 'teacher' || user.role === 'director' || user.role === 'super_admin' ? 'approved' : (existingPeer?.info.cameraPermission ?? 'none'),
               joinedAt: existingPeer?.info.joinedAt || new Date().toISOString(),
               lastActiveAt: new Date().toISOString(),
             };
@@ -140,6 +153,7 @@ export function setupLiveSignaling(httpServer: HttpServer) {
                 participants: existingParticipants,
                 chatMessages: room.chatMessages,
                 raisedHands: room.raisedHands.filter((h) => h.status === 'pending'),
+                cameraRequests: room.cameraRequests.filter((c) => c.status === 'pending'),
                 announcements: room.announcements,
                 isReconnect,
               })
@@ -271,6 +285,99 @@ export function setupLiveSignaling(httpServer: HttpServer) {
               type: 'hand_lowered',
               studentId,
             });
+            break;
+          }
+
+          case 'request_camera': {
+            if (!currentLessonId || !currentUserId) return;
+            const room = rooms.get(currentLessonId);
+            if (!room) return;
+
+            const peer = room.peers.get(currentUserId);
+            if (peer) {
+              peer.info.cameraPermission = 'requested';
+              const reqId = `cam_req_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+              const camReq = {
+                id: reqId,
+                lessonId: currentLessonId,
+                studentId: peer.info.userId,
+                studentName: peer.info.name,
+                grade: peer.info.grade || '',
+                section: peer.info.section || '',
+                timestamp: new Date().toISOString(),
+                status: 'pending' as const,
+              };
+
+              room.cameraRequests = [...room.cameraRequests.filter((r) => r.studentId !== peer.info.userId), camReq];
+
+              broadcastToRoom(currentLessonId, {
+                type: 'camera_requested',
+                request: camReq,
+                participant: peer.info,
+              });
+            }
+            break;
+          }
+
+          case 'approve_camera': {
+            if (!currentLessonId) return;
+            const room = rooms.get(currentLessonId);
+            if (!room) return;
+
+            const { studentId } = msg;
+            const targetPeer = room.peers.get(studentId);
+            if (targetPeer) {
+              targetPeer.info.cameraPermission = 'approved';
+              targetPeer.info.isVideoOff = false;
+
+              room.cameraRequests = room.cameraRequests.filter((r) => r.studentId !== studentId);
+
+              broadcastToRoom(currentLessonId, {
+                type: 'camera_approved',
+                studentId,
+                participant: targetPeer.info,
+              });
+            }
+            break;
+          }
+
+          case 'reject_camera': {
+            if (!currentLessonId) return;
+            const room = rooms.get(currentLessonId);
+            if (!room) return;
+
+            const { studentId } = msg;
+            const targetPeer = room.peers.get(studentId);
+            if (targetPeer) {
+              targetPeer.info.cameraPermission = 'rejected';
+              room.cameraRequests = room.cameraRequests.filter((r) => r.studentId !== studentId);
+
+              broadcastToRoom(currentLessonId, {
+                type: 'camera_rejected',
+                studentId,
+                participant: targetPeer.info,
+              });
+            }
+            break;
+          }
+
+          case 'revoke_camera': {
+            if (!currentLessonId) return;
+            const room = rooms.get(currentLessonId);
+            if (!room) return;
+
+            const { studentId } = msg;
+            const targetPeer = room.peers.get(studentId);
+            if (targetPeer) {
+              targetPeer.info.cameraPermission = 'none';
+              targetPeer.info.isVideoOff = true;
+
+              broadcastToRoom(currentLessonId, {
+                type: 'camera_revoked',
+                studentId,
+                participant: targetPeer.info,
+              });
+            }
             break;
           }
 

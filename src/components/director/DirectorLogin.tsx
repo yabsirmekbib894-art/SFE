@@ -49,10 +49,6 @@ export const DirectorLogin: React.FC = () => {
     }
   };
 
-  const handleQuickFill = () => {
-    setIdentifier('director.abebe');
-    setPassword('Director@2026');
-  };
 
   return (
     <div className="min-h-screen bg-slate-950 text-white flex flex-col justify-center py-12 sm:px-6 lg:px-8 selection:bg-amber-500 selection:text-slate-950">
@@ -149,16 +145,8 @@ export const DirectorLogin: React.FC = () => {
             </button>
           </form>
 
-          <div className="pt-4 border-t border-slate-800 flex items-center justify-between text-[11px] text-slate-400">
-            <span>Official Faculty Access Only</span>
-            <button
-              type="button"
-              onClick={handleQuickFill}
-              className="text-amber-400 hover:underline flex items-center gap-1 cursor-pointer"
-            >
-              <Sparkles className="w-3 h-3" />
-              Quick Fill Credentials
-            </button>
+          <div className="pt-4 border-t border-slate-800 text-center text-[11px] text-slate-400">
+            <span>Official Faculty Access Only • Authorized School Director Portal</span>
           </div>
         </div>
       </div>

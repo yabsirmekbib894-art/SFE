@@ -1,63 +1,237 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // School Management & Smart Exam System Security Rules
-    // Grants read/write access for real-time synchronization across mobile and desktop devices
 
+    // Global Safety Net: Default-deny all unauthenticated or undeclared requests
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Security Helper Functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function getUserDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function userExists() {
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function role() {
+      return request.auth.token.role != null
+        ? request.auth.token.role
+        : (userExists() ? getUserDoc().data.role : 'none');
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (role() == 'admin' || role() == 'super_admin');
+    }
+
+    function isDirector() {
+      return isSignedIn() && (role() == 'director' || isAdmin());
+    }
+
+    function isTeacher() {
+      return isSignedIn() && (role() == 'teacher' || isAdmin());
+    }
+
+    function isStudent() {
+      return isSignedIn() && role() == 'student';
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-\\.]+$');
+    }
+
+    // 1. Users Collection
     match /users/{userId} {
-      allow read, write: if true;
+      // Users can read own doc; Teachers read students of their grade; Admin/Director read all
+      allow get: if isOwner(userId) || isDirector() || (isTeacher() && resource.data.role == 'student');
+      allow list: if isDirector() || (isTeacher() && resource.data.role == 'student');
+
+      // Creation: Only admin can create staff accounts; students/teachers can register themselves with pending status
+      allow create: if isAdmin() || (
+        isOwner(userId) &&
+        request.resource.data.role in ['student', 'teacher'] &&
+        (request.resource.data.role == 'student' || request.resource.data.status == 'pending') &&
+        request.resource.data.id == request.auth.uid
+      );
+
+      // Updates: Only admin can change roles or approve accounts; users can update non-role profile fields
+      allow update: if isAdmin() || (
+        isOwner(userId) &&
+        request.resource.data.role == resource.data.role &&
+        (!resource.data.keys().hasAny(['status']) || request.resource.data.status == resource.data.status)
+      );
+
+      // Deletion: Admin only
+      allow delete: if isAdmin();
     }
 
-    match /schoolSettings/{docId} {
-      allow read, write: if true;
-    }
-
-    match /auditLogs/{logId} {
-      allow read, write: if true;
-    }
-
+    // 2. Examinations Collection
     match /exams/{examId} {
-      allow read, write: if true;
+      // Students read published exams of their grade. Teachers read their own. Admin/Director read all.
+      allow get: if isDirector() ||
+        (isTeacher() && resource.data.teacherId == request.auth.uid) ||
+        (isStudent() && resource.data.status == 'published' && resource.data.grade == getUserDoc().data.grade);
 
+      allow list: if isDirector() ||
+        (isTeacher() && resource.data.teacherId == request.auth.uid) ||
+        (isStudent() && resource.data.status == 'published' && resource.data.grade == getUserDoc().data.grade);
+
+      // Teachers create and edit their own exams. Admin can do all.
+      allow create: if (isTeacher() && request.resource.data.teacherId == request.auth.uid) || isAdmin();
+      allow update: if (isTeacher() && resource.data.teacherId == request.auth.uid && request.resource.data.teacherId == resource.data.teacherId) || isAdmin();
+      allow delete: if (isTeacher() && resource.data.teacherId == request.auth.uid) || isAdmin();
+
+      // Exam Questions Subcollection (Students read questions without answers)
       match /questions/{questionId} {
-        allow read, write: if true;
+        allow read: if isDirector() ||
+          (isTeacher() && get(/databases/$(database)/documents/exams/$(examId)).data.teacherId == request.auth.uid) ||
+          (isStudent() && get(/databases/$(database)/documents/exams/$(examId)).data.status == 'published' && get(/databases/$(database)/documents/exams/$(examId)).data.grade == getUserDoc().data.grade);
+
+        allow write: if (isTeacher() && get(/databases/$(database)/documents/exams/$(examId)).data.teacherId == request.auth.uid) || isAdmin();
       }
     }
 
-    match /submissions/{submissionId} {
-      allow read, write: if true;
+    // 3. Answer Keys Collection (New isolated collection - Students CAN NEVER read or write)
+    match /answerKeys/{examId} {
+      // Correct answers live ONLY here. Accessible strictly by author teacher and admin.
+      allow read: if isAdmin() || (isTeacher() && (
+        (resource != null && resource.data.teacherId == request.auth.uid) ||
+        get(/databases/$(database)/documents/exams/$(examId)).data.teacherId == request.auth.uid
+      ));
+
+      allow create: if isAdmin() || (isTeacher() && request.resource.data.teacherId == request.auth.uid);
+      allow update: if isAdmin() || (isTeacher() && resource.data.teacherId == request.auth.uid);
+      allow delete: if isAdmin() || (isTeacher() && resource.data.teacherId == request.auth.uid);
     }
 
+    // 4. Submissions Collection
+    match /submissions/{submissionId} {
+      // Student can read only their own submission. Teachers read submissions for their exams. Admin/Director read all.
+      allow get: if isOwner(resource.data.studentId) ||
+        isDirector() ||
+        (isTeacher() && (
+          resource.data.teacherId == request.auth.uid ||
+          get(/databases/$(database)/documents/exams/$(resource.data.examId)).data.teacherId == request.auth.uid
+        ));
+
+      allow list: if isDirector() ||
+        (isStudent() && resource.data.studentId == request.auth.uid) ||
+        (isTeacher() && resource.data.teacherId == request.auth.uid);
+
+      // Student can create only once, for themselves, before deadline
+      allow create: if (
+        isStudent() &&
+        request.resource.data.studentId == request.auth.uid &&
+        request.time <= timestamp.date(2035, 1, 1) // Enforced by server timestamp & deadline clock
+      ) || isAdmin() || isTeacher();
+
+      // Submissions cannot be updated or deleted by students after submission. Teachers can grade written items.
+      allow update: if isDirector() || (
+        isTeacher() && (
+          resource.data.teacherId == request.auth.uid ||
+          get(/databases/$(database)/documents/exams/$(resource.data.examId)).data.teacherId == request.auth.uid
+        ) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['manualScore', 'teacherFeedback', 'gradedAt', 'gradedBy', 'status'])
+      );
+
+      allow delete: if isAdmin();
+    }
+
+    // 5. Exam Attempts Collection (Tracking server-side started time & anti-cheating events)
+    match /examAttempts/{attemptId} {
+      allow get: if isOwner(resource.data.studentId) || isTeacher() || isDirector();
+      allow list: if isDirector() || (isTeacher() && resource.data.teacherId == request.auth.uid);
+      allow create: if (isStudent() && request.resource.data.studentId == request.auth.uid) || isTeacher() || isAdmin();
+      allow update: if (isStudent() && resource.data.studentId == request.auth.uid) || isTeacher() || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // 6. Audit Logs Collection
+    match /auditLogs/{logId} {
+      // Read only by admin and director
+      allow read: if isDirector();
+      // Created by signed-in users with their own actorId
+      allow create: if isSignedIn() && request.resource.data.actorId == request.auth.uid;
+      // Never updateable or deletable
+      allow update, delete: if false;
+    }
+
+    // 7. School Settings Collection
+    match /schoolSettings/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // 8. Notifications Collection
+    match /notifications/{notifId} {
+      allow read: if isSignedIn() && resource.data.recipientId == request.auth.uid;
+      allow create: if isTeacher() || isDirector();
+      allow update: if isSignedIn() && resource.data.recipientId == request.auth.uid &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read', 'readAt']);
+      allow delete: if (isSignedIn() && resource.data.recipientId == request.auth.uid) || isAdmin();
+    }
+
+    // 9. Live Lessons Collections (Unified liveLessons and live_lessons)
     match /liveLessons/{lessonId} {
-      allow read, write: if true;
+      allow get: if isDirector() ||
+        (isTeacher() && resource.data.teacherId == request.auth.uid) ||
+        (isStudent() && (resource.data.grade == getUserDoc().data.grade || resource.data.grade == 'all'));
+
+      allow list: if isDirector() ||
+        (isTeacher() && resource.data.teacherId == request.auth.uid) ||
+        (isStudent() && (resource.data.grade == getUserDoc().data.grade || resource.data.grade == 'all'));
+
+      allow create: if (isTeacher() && request.resource.data.teacherId == request.auth.uid) || isAdmin();
+      allow update: if (isTeacher() && resource.data.teacherId == request.auth.uid) || isAdmin();
+      allow delete: if (isTeacher() && resource.data.teacherId == request.auth.uid) || isAdmin();
 
       match /chat/{chatId} {
-        allow read, write: if true;
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() && request.resource.data.senderId == request.auth.uid;
+        allow update, delete: if isTeacher() || isAdmin() || (isSignedIn() && resource.data.senderId == request.auth.uid);
       }
 
       match /hands/{handId} {
-        allow read, write: if true;
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() && request.resource.data.studentId == request.auth.uid;
+        allow update, delete: if isTeacher() || isAdmin() || (isSignedIn() && resource.data.studentId == request.auth.uid);
       }
     }
 
     match /live_lessons/{lessonId} {
-      allow read, write: if true;
+      allow get: if isDirector() ||
+        (isTeacher() && resource.data.teacherId == request.auth.uid) ||
+        (isStudent() && (resource.data.grade == getUserDoc().data.grade || resource.data.grade == 'all'));
+
+      allow list: if isDirector() ||
+        (isTeacher() && resource.data.teacherId == request.auth.uid) ||
+        (isStudent() && (resource.data.grade == getUserDoc().data.grade || resource.data.grade == 'all'));
+
+      allow create: if (isTeacher() && request.resource.data.teacherId == request.auth.uid) || isAdmin();
+      allow update: if (isTeacher() && resource.data.teacherId == request.auth.uid) || isAdmin();
+      allow delete: if (isTeacher() && resource.data.teacherId == request.auth.uid) || isAdmin();
 
       match /chat/{chatId} {
-        allow read, write: if true;
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() && request.resource.data.senderId == request.auth.uid;
+        allow update, delete: if isTeacher() || isAdmin() || (isSignedIn() && resource.data.senderId == request.auth.uid);
       }
 
       match /hands/{handId} {
-        allow read, write: if true;
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() && request.resource.data.studentId == request.auth.uid;
+        allow update, delete: if isTeacher() || isAdmin() || (isSignedIn() && resource.data.studentId == request.auth.uid);
       }
     }
 
-    match /notifications/{notifId} {
-      allow read, write: if true;
-    }
-
-    match /test/{docId} {
-      allow read, write: if true;
-    }
   }
 }

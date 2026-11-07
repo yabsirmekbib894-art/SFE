@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext.tsx';
-import { LiveLesson, ClassroomParticipant, LiveChatMessage, RaisedHandRequest } from '../../types/index.ts';
+import { LiveLesson, ClassroomParticipant, LiveChatMessage, RaisedHandRequest, CameraAccessRequest } from '../../types/index.ts';
 import { SchoolLogo } from '../layout/SchoolLogo.tsx';
 import {
   Mic,
@@ -26,6 +26,14 @@ import {
   Monitor,
   Wifi,
   WifiOff,
+  Check,
+  X,
+  Camera,
+  PenTool,
+  Bot,
+  Layers,
+  ChevronDown,
+  BookOpen,
 } from 'lucide-react';
 
 interface LiveClassroomProps {
@@ -67,7 +75,20 @@ const MediaVideo: React.FC<MediaVideoProps> = ({
   placeholder,
 }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const [hasLiveVideoTrack, setHasLiveVideoTrack] = useState<boolean>(false);
+  const [hasLiveVideoTrack, setHasLiveVideoTrack] = useState<boolean>(() => {
+    if (!stream) return false;
+    return stream.getVideoTracks().some((t) => t.enabled && t.readyState === 'live');
+  });
+
+  const checkTrackStatus = useCallback(() => {
+    if (!stream) {
+      setHasLiveVideoTrack(false);
+      return;
+    }
+    const vTracks = stream.getVideoTracks();
+    const live = vTracks.some((t) => t.enabled && t.readyState === 'live');
+    setHasLiveVideoTrack(live);
+  }, [stream]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -83,16 +104,11 @@ const MediaVideo: React.FC<MediaVideoProps> = ({
 
     // Attach stream to element
     if (video.srcObject !== stream) {
+      console.log('[LiveCamera] Binding stream to HTMLVideoElement, streamId:', stream.id, 'tracks:', stream.getTracks().length);
       video.srcObject = stream;
     }
     video.muted = isMuted;
     video.playsInline = true;
-
-    const checkTrackStatus = () => {
-      const vTracks = stream.getVideoTracks();
-      const live = vTracks.some((t) => t.enabled && t.readyState === 'live');
-      setHasLiveVideoTrack(live);
-    };
 
     checkTrackStatus();
 
@@ -105,10 +121,10 @@ const MediaVideo: React.FC<MediaVideoProps> = ({
       playPromise
         .then(() => checkTrackStatus())
         .catch((err) => {
-          console.warn('[WebRTC Video] Autoplay prevented, attempting muted playback:', err);
+          console.warn('[LiveCamera] Autoplay prevented, retrying muted:', err);
           if (!video.muted) {
             video.muted = true;
-            video.play().then(() => checkTrackStatus()).catch((e) => console.warn('[WebRTC Video] Play error:', e));
+            video.play().then(() => checkTrackStatus()).catch((e) => console.warn('[LiveCamera] Play error:', e));
           }
         });
     }
@@ -117,7 +133,7 @@ const MediaVideo: React.FC<MediaVideoProps> = ({
       stream.removeEventListener('addtrack', handleTrackChange);
       stream.removeEventListener('removetrack', handleTrackChange);
     };
-  }, [stream, isMuted]);
+  }, [stream, isMuted, checkTrackStatus]);
 
   useEffect(() => {
     if (videoRef.current) {
@@ -125,18 +141,23 @@ const MediaVideo: React.FC<MediaVideoProps> = ({
     }
   }, [isMuted]);
 
-  if (!stream || !hasLiveVideoTrack) {
-    return <>{placeholder || null}</>;
-  }
+  const showVideo = !!stream && hasLiveVideoTrack;
 
   return (
-    <video
-      ref={videoRef}
-      autoPlay
-      playsInline
-      muted={isMuted}
-      className={`w-full h-full ${fit === 'contain' ? 'object-contain bg-black' : 'object-cover'} ${className}`}
-    />
+    <div className="relative w-full h-full flex items-center justify-center overflow-hidden bg-slate-900">
+      <video
+        ref={videoRef}
+        autoPlay
+        playsInline
+        muted={isMuted}
+        className={`w-full h-full ${fit === 'contain' ? 'object-contain bg-black' : 'object-cover'} ${className} ${showVideo ? 'block' : 'hidden'}`}
+      />
+      {!showVideo && (
+        <div className="absolute inset-0 flex items-center justify-center z-10">
+          {placeholder || null}
+        </div>
+      )}
+    </div>
   );
 };
 
@@ -162,12 +183,49 @@ export const LiveClassroom: React.FC<LiveClassroomProps> = ({ lesson, onLeave })
   const [participants, setParticipants] = useState<ClassroomParticipant[]>([]);
   const [chatMessages, setChatMessages] = useState<LiveChatMessage[]>([]);
   const [raisedHands, setRaisedHands] = useState<RaisedHandRequest[]>([]);
+  const [cameraRequests, setCameraRequests] = useState<CameraAccessRequest[]>([]);
+  const [myCameraStatus, setMyCameraStatus] = useState<'none' | 'requested' | 'approved' | 'rejected'>('none');
   const [announcements, setAnnouncements] = useState<Array<{ id: string; text: string; timestamp: string }>>([]);
   const [chatInput, setChatInput] = useState('');
   const [isQuestionInput, setIsQuestionInput] = useState(false);
   const [announcementInput, setAnnouncementInput] = useState('');
   const [showAnnouncementBox, setShowAnnouncementBox] = useState(false);
-  const [activeSideTab, setActiveSideTab] = useState<'chat' | 'participants' | 'hands'>('chat');
+  const [activeSideTab, setActiveSideTab] = useState<'chat' | 'participants' | 'hands' | 'camera'>('chat');
+  const [showWhiteboard, setShowWhiteboard] = useState<boolean>(false);
+  const [showAiAssistant, setShowAiAssistant] = useState<boolean>(false);
+  const [aiQuestion, setAiQuestion] = useState<string>('');
+  const [aiAnswer, setAiAnswer] = useState<string | null>(null);
+  const [isAiLoading, setIsAiLoading] = useState<boolean>(false);
+
+  const handleAskAi = async () => {
+    if (!aiQuestion.trim() || isAiLoading) return;
+    const q = aiQuestion.trim();
+    setIsAiLoading(true);
+    setAiAnswer(null);
+    try {
+      const res = await fetch('/api/ask-classroom-ai', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          question: q,
+          subject: lesson.subject,
+          grade: lesson.grade,
+          lessonTitle: lesson.title,
+        }),
+      });
+      const data = await res.json();
+      if (data.success && data.answer) {
+        setAiAnswer(data.answer);
+      } else {
+        setAiAnswer(data.error || 'AI assistant is currently unavailable. Please try again.');
+      }
+    } catch {
+      setAiAnswer('Connection error reaching AI assistant.');
+    } finally {
+      setIsAiLoading(false);
+    }
+  };
+
   const [speakingNotification, setSpeakingNotification] = useState<string | null>(null);
   const [canSpeak, setCanSpeak] = useState<boolean>(isTeacher || isDirector);
   const [hasRaisedHand, setHasRaisedHand] = useState<boolean>(false);
@@ -623,6 +681,124 @@ export const LiveClassroom: React.FC<LiveClassroomProps> = ({ lesson, onLeave })
   }, [initMedia]);
 
   /**
+   * Acquire camera feed for approved student and broadcast tracks to peers
+   */
+  const enableStudentCameraFeed = useCallback(async () => {
+    try {
+      console.log('[LiveCamera] Approved student requesting camera video stream...');
+      const videoStream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24 } },
+        audio: false,
+      });
+      const videoTrack = videoStream.getVideoTracks()[0];
+      if (!videoTrack) return;
+
+      videoTrack.enabled = true;
+      setIsVideoOff(false);
+      isVideoOffRef.current = false;
+
+      let combinedStream = localCamStreamRef.current;
+      if (!combinedStream) {
+        combinedStream = new MediaStream([videoTrack]);
+      } else {
+        combinedStream.getVideoTracks().forEach((t) => combinedStream?.removeTrack(t));
+        combinedStream.addTrack(videoTrack);
+      }
+      localCamStreamRef.current = combinedStream;
+      setLocalCamStream(new MediaStream(combinedStream.getTracks()));
+
+      // Attach new video track to all active peer connections
+      peerConnections.current.forEach((pc) => {
+        const senders = pc.getSenders();
+        const existingVideoSender = senders.find(
+          (s) => s.track?.kind === 'video' || (s.track && s.track.id === videoTrack.id)
+        );
+        if (existingVideoSender) {
+          existingVideoSender.replaceTrack(videoTrack).catch((e) => console.warn('[LiveCamera] replaceTrack error:', e));
+        } else {
+          try {
+            console.log('[LiveCamera] Adding student video track to peer connection');
+            pc.addTrack(videoTrack, combinedStream!);
+          } catch (e) {
+            console.warn('[LiveCamera] addTrack error:', e);
+          }
+        }
+      });
+
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(
+          JSON.stringify({
+            type: 'media_state',
+            isVideoOff: false,
+            cameraStreamId: combinedStream.id,
+            cameraTrackId: videoTrack.id,
+          })
+        );
+      }
+    } catch (err) {
+      console.error('[LiveCamera] Error accessing student camera:', err);
+      alert('Could not access camera device. Please check browser permissions.');
+    }
+  }, []);
+
+  const enableStudentCameraFeedRef = useRef(enableStudentCameraFeed);
+  enableStudentCameraFeedRef.current = enableStudentCameraFeed;
+
+  const requestCameraPermission = useCallback(() => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      console.log('[LiveCamera] Sending student camera request to teacher...');
+      wsRef.current.send(
+        JSON.stringify({
+          type: 'request_camera',
+          studentId: currentUser?.id,
+          studentName: currentUser?.name,
+          grade: currentUser?.grade,
+          section: currentUser?.section,
+        })
+      );
+      setMyCameraStatus('requested');
+    }
+  }, [currentUser]);
+
+  const approveStudentCamera = useCallback((studentId: string) => {
+    console.log('[LiveCamera] Teacher approved camera for student:', studentId);
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(
+        JSON.stringify({
+          type: 'approve_camera',
+          studentId,
+        })
+      );
+    }
+    setCameraRequests((prev) => prev.filter((r) => r.studentId !== studentId));
+  }, []);
+
+  const rejectStudentCamera = useCallback((studentId: string) => {
+    console.log('[LiveCamera] Teacher rejected camera for student:', studentId);
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(
+        JSON.stringify({
+          type: 'reject_camera',
+          studentId,
+        })
+      );
+    }
+    setCameraRequests((prev) => prev.filter((r) => r.studentId !== studentId));
+  }, []);
+
+  const revokeStudentCamera = useCallback((studentId: string) => {
+    console.log('[LiveCamera] Teacher revoking camera for student:', studentId);
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(
+        JSON.stringify({
+          type: 'revoke_camera',
+          studentId,
+        })
+      );
+    }
+  }, []);
+
+  /**
    * 2. WebSocket Connection & Lifecycle Management
    * Stable: Runs once per lesson/user and automatically reconnects on network interruptions.
    */
@@ -677,11 +853,12 @@ export const LiveClassroom: React.FC<LiveClassroomProps> = ({ lesson, onLeave })
 
           switch (type) {
             case 'room_state': {
-              console.log('[Signaling] Received room state with participants:', msg.participants?.length);
+              console.log('[Signaling] Received room state with participants:', msg.participants?.length, 'cameraRequests:', msg.cameraRequests?.length);
               setParticipants(msg.participants || []);
               setChatMessages(msg.chatMessages || []);
               setRaisedHands(msg.raisedHands || []);
               setAnnouncements(msg.announcements || []);
+              setCameraRequests(msg.cameraRequests || []);
 
               // Check if teacher in room state is sharing their screen
               const teacherInRoom = (msg.participants || []).find(
@@ -701,6 +878,70 @@ export const LiveClassroom: React.FC<LiveClassroomProps> = ({ lesson, onLeave })
                 }
               }
               break;
+            }
+
+            case 'camera_requested': {
+              console.log('[LiveCamera] Student camera access requested:', msg.request);
+              setCameraRequests((prev) => [...prev.filter((r) => r.studentId !== msg.request.studentId), msg.request]);
+              if (isTeacher) {
+                setSpeakingNotification(`Camera permission requested by ${msg.request.studentName}`);
+                setTimeout(() => setSpeakingNotification(null), 6000);
+              }
+              break;
+            }
+
+            case 'camera_approved': {
+              console.log('[LiveCamera] Student camera approved by teacher:', msg.studentId);
+              setCameraRequests((prev) => prev.filter((r) => r.studentId !== msg.studentId));
+              setParticipants((prev) =>
+                prev.map((p) => (p.userId === msg.studentId ? { ...p, cameraPermission: 'approved' } : p))
+              );
+              if (msg.studentId === currentUser.id) {
+                setMyCameraStatus('approved');
+                setSpeakingNotification('Instructor approved your camera! Streaming live video...');
+                setTimeout(() => setSpeakingNotification(null), 6000);
+                enableStudentCameraFeed();
+              }
+              break;
+            }
+
+            case 'camera_rejected': {
+              console.log('[LiveCamera] Student camera request declined:', msg.studentId);
+              setCameraRequests((prev) => prev.filter((r) => r.studentId !== msg.studentId));
+              setParticipants((prev) =>
+                prev.map((p) => (p.userId === msg.studentId ? { ...p, cameraPermission: 'rejected' } : p))
+              );
+              if (msg.studentId === currentUser.id) {
+                setMyCameraStatus('rejected');
+                alert('Your camera access request was declined by the instructor.');
+              }
+              break;
+            }
+
+            case 'camera_revoked': {
+              console.log('[LiveCamera] Student camera access revoked by teacher:', msg.studentId);
+              setParticipants((prev) =>
+                prev.map((p) => (p.userId === msg.studentId ? { ...p, cameraPermission: 'none', isVideoOff: true } : p))
+              );
+              if (msg.studentId === currentUser.id) {
+                setMyCameraStatus('none');
+                setIsVideoOff(true);
+                isVideoOffRef.current = true;
+                if (localCamStreamRef.current) {
+                  localCamStreamRef.current.getVideoTracks().forEach((t) => {
+                    t.stop();
+                    localCamStreamRef.current?.removeTrack(t);
+                  });
+                }
+                peerConnections.current.forEach((pc) => {
+                  pc.getSenders().forEach((s) => {
+                    if (s.track?.kind === 'video') {
+                      s.replaceTrack(null).catch(() => {});
+                    }
+                  });
+                });
+                alert('Instructor has disabled camera broadcasting for your seat.');
+              }
             }
 
             case 'user_joined': {
@@ -1221,85 +1462,56 @@ export const LiveClassroom: React.FC<LiveClassroomProps> = ({ lesson, onLeave })
       ref={classroomContainerRef}
       className="fixed inset-0 z-50 bg-slate-950 text-white flex flex-col font-sans select-none overflow-hidden"
     >
-      {/* Top Classroom Bar */}
-      <header className="h-16 bg-slate-900 border-b border-slate-800 px-4 sm:px-6 flex items-center justify-between shrink-0 shadow-md">
+      {/* Top Classroom Bar - Screenshot 3 Style */}
+      <header className="h-14 bg-white/5 backdrop-blur-md border-b border-white/10 px-4 sm:px-6 flex items-center justify-between shrink-0 shadow-lg z-20">
         <div className="flex items-center gap-3">
           <SchoolLogo size="sm" lightText />
-          <div className="hidden sm:block border-l border-slate-700 pl-3">
-            <div className="flex items-center gap-2">
-              <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30">
-                <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
-                LIVE CLASSROOM
-              </span>
-              <h1 className="text-xs sm:text-sm font-bold text-white truncate max-w-[280px] md:max-w-md">
-                {lesson.title}
-              </h1>
-            </div>
-            <p className="text-[11px] text-slate-400 mt-0.5">
-              {lesson.grade} • {lesson.subject} • Faculty Instructor:{' '}
-              <strong className="text-slate-200">{lesson.teacherName}</strong>
-            </p>
+          {/* Subject Badge / Dropdown from Screenshot 3 */}
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 text-xs font-semibold text-indigo-300">
+            <BookOpen className="w-3.5 h-3.5 text-indigo-400" />
+            <span className="font-bold">{lesson.subject || 'Algebra'} • {lesson.grade || '8 класс'}</span>
+            <ChevronDown className="w-3 h-3 text-indigo-300/70" />
           </div>
         </div>
 
-        {/* Status & Controls */}
-        <div className="flex items-center gap-3">
-          {/* Connection Status Badge */}
-          <div
-            className={`flex items-center gap-2 text-xs px-3 py-1.5 rounded-xl border ${
-              connectionStatus === 'connected'
-                ? 'bg-emerald-950/40 border-emerald-800/60 text-emerald-300'
-                : connectionStatus === 'reconnecting'
-                ? 'bg-amber-950/40 border-amber-800/60 text-amber-300 animate-pulse'
-                : 'bg-rose-950/40 border-rose-800/60 text-rose-300'
+        {/* Status & Quick Toggles */}
+        <div className="flex items-center gap-2.5">
+          {/* Participants Count Badge */}
+          <button
+            onClick={() => setActiveSideTab('participants')}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-medium text-slate-300 transition-colors cursor-pointer"
+          >
+            <Users className="w-3.5 h-3.5 text-slate-400" />
+            <span>Участников: {participants.length || 1}</span>
+          </button>
+
+          {/* Chat Toggle Button */}
+          <button
+            onClick={() => setActiveSideTab('chat')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-2xl border text-xs font-medium transition-colors cursor-pointer ${
+              activeSideTab === 'chat'
+                ? 'bg-indigo-600 border-indigo-500 text-white'
+                : 'bg-white/5 hover:bg-white/10 border-white/10 text-slate-300'
             }`}
           >
-            {connectionStatus === 'connected' ? (
-              <Wifi className="w-3.5 h-3.5 text-emerald-400" />
-            ) : (
-              <WifiOff className="w-3.5 h-3.5 text-amber-400" />
-            )}
-            <span className="font-semibold capitalize text-[11px]">
-              {connectionStatus === 'connected'
-                ? `${participants.length} Active`
-                : connectionStatus === 'reconnecting'
-                ? 'Reconnecting...'
-                : 'Disconnected'}
-            </span>
-          </div>
+            <MessageSquare className="w-3.5 h-3.5" />
+            <span>Чат</span>
+          </button>
 
           {/* Fullscreen Button */}
           <button
             onClick={toggleFullscreen}
-            className="p-2 rounded-xl bg-slate-800 border border-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer hidden sm:block"
+            className="p-2 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 transition-colors cursor-pointer hidden sm:block"
             title={isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'}
           >
-            {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+            {isFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
           </button>
-
-          {isTeacher ? (
-            <button
-              onClick={handleEndClass}
-              className="px-3.5 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-md shadow-rose-600/30 flex items-center gap-1.5 transition-colors cursor-pointer"
-            >
-              <PhoneOff className="w-3.5 h-3.5" />
-              <span>End for Everyone</span>
-            </button>
-          ) : (
-            <button
-              onClick={handleLeaveClass}
-              className="px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
-            >
-              <PhoneOff className="w-3.5 h-3.5 text-rose-400" />
-              <span>Leave Class</span>
-            </button>
-          )}
         </div>
       </header>
 
       {/* Permission Warning Banner if mic/cam blocked */}
       {permissionError && (
-        <div className="bg-amber-500/10 border-b border-amber-500/20 px-4 py-2 text-xs text-amber-300 flex items-center justify-between">
+        <div className="bg-amber-500/10 border-b border-amber-500/20 px-4 py-2 text-xs text-amber-300 flex items-center justify-between z-20">
           <div className="flex items-center gap-2">
             <AlertCircle className="w-4 h-4 shrink-0 text-amber-400" />
             <span>{permissionError}</span>
@@ -1315,7 +1527,7 @@ export const LiveClassroom: React.FC<LiveClassroomProps> = ({ lesson, onLeave })
 
       {/* Speaking Permission Notification Banner */}
       {speakingNotification && (
-        <div className="bg-emerald-500/15 border-b border-emerald-500/30 px-4 py-2.5 text-xs text-emerald-300 flex items-center justify-between animate-bounce">
+        <div className="bg-emerald-500/15 border-b border-emerald-500/30 px-4 py-2 text-xs text-emerald-300 flex items-center justify-between animate-bounce z-20">
           <div className="flex items-center gap-2">
             <Sparkles className="w-4 h-4 text-emerald-400 shrink-0" />
             <span className="font-bold">{speakingNotification}</span>
@@ -1329,250 +1541,393 @@ export const LiveClassroom: React.FC<LiveClassroomProps> = ({ lesson, onLeave })
         </div>
       )}
 
-      {/* Latest Classroom Announcement Banner */}
-      {announcements.length > 0 && (
-        <div className="bg-indigo-950/60 border-b border-indigo-800/40 px-4 py-2 text-xs text-indigo-200 flex items-center gap-2">
-          <Megaphone className="w-4 h-4 text-indigo-400 shrink-0" />
-          <span className="font-semibold text-indigo-300">Teacher Announcement:</span>
-          <span className="truncate">{announcements[0].text}</span>
-        </div>
-      )}
-
       {/* Main Classroom Workspace: Video Canvas (Left) + Interaction Sidebar (Right) */}
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex overflow-hidden relative">
         {/* Left: Video Stage & Controls */}
-        <div className="flex-1 p-3 sm:p-4 flex flex-col justify-between overflow-y-auto space-y-3 bg-slate-950">
-          {/* Main Stage: Screen share, Teacher Video, or Teacher Placeholder */}
-          <div className="flex-1 min-h-[320px] bg-slate-900 rounded-3xl border border-slate-800/80 overflow-hidden relative shadow-2xl flex items-center justify-center">
-            <MediaVideo
-              stream={mainStageStream}
-              isMuted={isMainStageMuted}
-              fit={isTeacherScreenSharingActive ? 'contain' : 'cover'}
-              placeholder={
-                <div className="flex flex-col items-center justify-center text-center p-6 space-y-3">
-                  <div className="w-24 h-24 rounded-3xl bg-indigo-600/20 border-2 border-indigo-500/40 text-indigo-400 flex items-center justify-center text-3xl font-bold shadow-lg shadow-indigo-600/10">
-                    {lesson.teacherName.charAt(0)}
+        <div className="flex-1 p-3 sm:p-5 flex flex-col justify-between overflow-y-auto space-y-3 bg-[#0d1117] relative">
+          
+          {/* Main Stage Grid - Matching Screenshot 3: Spotlight Teacher on Left (55-60%), 2x2 Student Grid on Right */}
+          <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-3 min-h-[420px] relative">
+            
+            {/* Spotlight Teacher Video Canvas (Left 7 Cols on desktop) */}
+            <div className="lg:col-span-7 bg-slate-900 rounded-3xl border border-slate-800/80 overflow-hidden relative shadow-2xl flex items-center justify-center min-h-[300px]">
+              <MediaVideo
+                stream={mainStageStream}
+                isMuted={isMainStageMuted}
+                fit={isTeacherScreenSharingActive ? 'contain' : 'cover'}
+                placeholder={
+                  <div className="flex flex-col items-center justify-center text-center p-6 space-y-3">
+                    <div className="w-24 h-24 rounded-3xl bg-indigo-600/20 border-2 border-indigo-500/40 text-indigo-400 flex items-center justify-center text-3xl font-bold shadow-lg shadow-indigo-600/10">
+                      {lesson.teacherName.charAt(0)}
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-white text-base">{lesson.teacherName}</h3>
+                      <p className="text-xs text-slate-400 mt-0.5">Faculty Lead • {lesson.subject}</p>
+                      <span className="inline-block mt-2 text-[10px] bg-slate-800 text-slate-300 px-3 py-1 rounded-full font-mono">
+                        {isTeacher && isVideoOff
+                          ? 'Camera Off (Click Camera On below to stream)'
+                          : isTeacher && isMediaInitializing
+                          ? 'Initializing Camera...'
+                          : isTeacherScreenSharingActive
+                          ? 'Screen share presentation connecting...'
+                          : teacherParticipant
+                          ? 'Instructor Camera Connecting / Audio Active'
+                          : 'Waiting for Instructor to connect...'}
+                      </span>
+                    </div>
                   </div>
-                  <div>
-                    <h3 className="font-bold text-white text-base">{lesson.teacherName}</h3>
-                    <p className="text-xs text-slate-400 mt-0.5">Faculty Lead • {lesson.subject}</p>
-                    <span className="inline-block mt-2 text-[10px] bg-slate-800 text-slate-300 px-3 py-1 rounded-full font-mono">
-                      {isTeacher && isVideoOff
-                        ? 'Camera Off (Click Camera On below to stream)'
-                        : isTeacher && isMediaInitializing
-                        ? 'Initializing Camera...'
-                        : isTeacherScreenSharingActive
-                        ? 'Screen share presentation connecting...'
-                        : teacherParticipant
-                        ? 'Instructor Camera Connecting / Audio Active'
-                        : 'Waiting for Instructor to connect...'}
-                    </span>
-                  </div>
-                </div>
-              }
-            />
+                }
+              />
 
-            {/* Stage Info Badge */}
-            <div className="absolute top-4 left-4 flex items-center gap-2 bg-slate-950/80 backdrop-blur-md px-3 py-1.5 rounded-xl border border-slate-700/60 text-xs font-semibold">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              <span className="flex items-center gap-1.5">
-                {isTeacherScreenSharingActive ? (
-                  <>
-                    <Monitor className="w-3.5 h-3.5 text-amber-400" />
-                    <span>Teacher Screen Presentation (LIVE)</span>
-                  </>
-                ) : (
-                  <span>Teacher: {lesson.teacherName}</span>
-                )}
-              </span>
+              {/* Teacher Name Tag Pill at Bottom-Left with Live Audio Wave - Screenshot 3 Style */}
+              <div className="absolute bottom-3 left-3 flex items-center gap-2 bg-slate-950/80 backdrop-blur-md px-3.5 py-1.5 rounded-2xl border border-white/10 text-xs font-semibold text-white shadow-lg">
+                <Video className="w-3.5 h-3.5 text-indigo-400" />
+                <span className="font-bold">{lesson.teacherName}</span>
+                {/* Animated Audio Equalizer Bars */}
+                <div className="flex items-end gap-0.5 h-3 px-1">
+                  <div className="w-0.5 h-2 bg-indigo-400 animate-pulse" />
+                  <div className="w-0.5 h-3.5 bg-indigo-400 animate-pulse delay-75" />
+                  <div className="w-0.5 h-1.5 bg-indigo-400 animate-pulse delay-150" />
+                </div>
+              </div>
+
+              {/* Screen Share Indicator if active */}
+              {isTeacherScreenSharingActive && (
+                <div className="absolute top-3 left-3 flex items-center gap-2 bg-amber-950/80 backdrop-blur-md px-3 py-1 rounded-xl border border-amber-600/40 text-[11px] font-bold text-amber-300">
+                  <Monitor className="w-3 h-3 text-amber-400 animate-pulse" />
+                  <span>Screen Presentation Live</span>
+                </div>
+              )}
             </div>
 
-            {/* Picture-in-Picture: When screen sharing is active, show the Teacher's Camera in floating PiP */}
-            {isTeacherScreenSharingActive && (
-              <div className="absolute top-4 right-4 w-36 sm:w-48 h-28 sm:h-36 bg-slate-900 rounded-2xl border-2 border-indigo-500/60 overflow-hidden shadow-2xl z-20">
-                <MediaVideo
-                  stream={teacherCamStream}
-                  isMuted={isTeacher}
-                  fit="cover"
-                  placeholder={
-                    <div className="w-full h-full flex flex-col items-center justify-center text-[10px] text-slate-400 bg-slate-900 p-2 text-center">
-                      <div className="w-8 h-8 rounded-full bg-indigo-600/30 text-indigo-300 font-bold flex items-center justify-center text-xs mb-1">
-                        {lesson.teacherName.charAt(0)}
-                      </div>
-                      <span className="font-semibold text-slate-300 truncate w-full">{lesson.teacherName}</span>
-                      <span className="text-[9px] text-slate-500">Audio Active</span>
-                    </div>
-                  }
-                />
-                <div className="absolute bottom-1 left-2 text-[10px] bg-slate-950/80 px-1.5 py-0.5 rounded font-semibold text-slate-300">
-                  Instructor
-                </div>
-              </div>
-            )}
+            {/* 2x2 Student Video Grid (Right 5 Cols on desktop) - Screenshot 3 Style */}
+            <div className="lg:col-span-5 grid grid-cols-2 gap-2.5">
+              {/* If fewer than 4 students in room, display actual participants or placeholder student tiles */}
+              {Array.from({ length: 4 }).map((_, idx) => {
+                const student = studentParticipants[idx];
+                const studentStream = student ? remoteCamStreams.get(student.userId) || null : null;
+                const hasLiveVideo = student && studentStream && !student.isVideoOff;
+                const mockStudentNames = ['Arman', 'Aruzhan', 'Madina', 'Erasyl'];
+                const displayName = student?.name || mockStudentNames[idx % mockStudentNames.length];
+                const isStudentActive = !!student;
 
-            {/* Self-preview Picture-in-Picture for student */}
-            {!isTeacher && (
-              <div className="absolute bottom-4 right-4 w-32 sm:w-44 h-24 sm:h-32 bg-slate-900 rounded-2xl border-2 border-slate-750 overflow-hidden shadow-2xl z-10">
-                {!isVideoOff && localCamStream ? (
-                  <MediaVideo stream={localCamStream} isMuted={true} fit="cover" />
-                ) : (
-                  <div className="w-full h-full flex flex-col items-center justify-center text-[11px] text-slate-400 bg-slate-900">
-                    <div className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center font-bold text-white mb-1">
-                      {currentUser?.name.charAt(0)}
-                    </div>
-                    <span>Camera Off</span>
-                  </div>
-                )}
-                <div className="absolute bottom-1.5 left-2 text-[10px] bg-slate-950/80 px-1.5 py-0.5 rounded font-semibold text-slate-300">
-                  You ({currentUser?.name.split(' ')[0]})
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Student Video / Avatar Grid */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-2 shrink-0">
-            {studentParticipants.slice(0, 6).map((student) => {
-              const studentStream = remoteCamStreams.get(student.userId) || null;
-              const hasVideo = studentStream && !student.isVideoOff;
-
-              return (
-                <div
-                  key={student.userId}
-                  className="h-20 sm:h-24 bg-slate-900/90 rounded-2xl border border-slate-800 flex flex-col items-center justify-center p-2 relative overflow-hidden"
-                >
-                  {hasVideo ? (
-                    <MediaVideo stream={studentStream} isMuted={false} fit="cover" />
-                  ) : (
-                    <>
-                      <div className="w-8 h-8 rounded-full bg-emerald-600/20 text-emerald-400 font-bold flex items-center justify-center text-xs mb-1">
-                        {student.name.charAt(0)}
-                      </div>
-                      <div className="text-[11px] font-semibold text-slate-200 truncate w-full text-center">
-                        {student.name.split(' ')[0]}
-                      </div>
-                      <div className="text-[9px] text-slate-500 font-mono">
-                        {student.section || student.grade}
-                      </div>
-                    </>
-                  )}
-
-                  {/* Hand raised indicator */}
-                  {student.hasHandRaised && (
-                    <div className="absolute top-1.5 right-1.5 p-1 bg-amber-500 rounded-full text-slate-950 animate-bounce">
-                      <Hand className="w-3 h-3" />
-                    </div>
-                  )}
-
-                  {/* Audio status */}
-                  <div className="absolute bottom-1.5 left-1.5">
-                    {student.isAudioMuted ? (
-                      <MicOff className="w-3 h-3 text-slate-500" />
+                return (
+                  <div
+                    key={student ? student.userId : `slot_${idx}`}
+                    className="bg-slate-900 rounded-2xl border border-slate-800/80 relative overflow-hidden flex flex-col items-center justify-center shadow-lg min-h-[140px] group"
+                  >
+                    {hasLiveVideo && studentStream ? (
+                      <MediaVideo stream={studentStream} isMuted={false} fit="cover" />
                     ) : (
-                      <Mic className="w-3 h-3 text-emerald-400 animate-pulse" />
+                      <div className="flex flex-col items-center justify-center p-3 text-center">
+                        <div className="w-12 h-12 rounded-2xl bg-indigo-600/20 text-indigo-300 border border-indigo-500/30 flex items-center justify-center font-bold text-sm mb-1.5">
+                          {displayName.charAt(0)}
+                        </div>
+                        <span className="text-xs font-semibold text-slate-300 truncate max-w-[100px]">{displayName}</span>
+                        <span className="text-[10px] text-slate-500">{isStudentActive ? 'Student' : 'Invited'}</span>
+                      </div>
+                    )}
+
+                    {/* Student Name Pill at Bottom-Left with Audio Status - Screenshot 3 Style */}
+                    <div className="absolute bottom-2 left-2 flex items-center gap-1.5 bg-black/60 backdrop-blur-md px-2.5 py-1 rounded-xl text-[11px] font-semibold text-slate-200">
+                      <span>{displayName.split(' ')[0]}</span>
+                      {student?.isAudioMuted ? (
+                        <MicOff className="w-3 h-3 text-rose-400" />
+                      ) : (
+                        <Mic className="w-3 h-3 text-emerald-400" />
+                      )}
+                    </div>
+
+                    {/* Teacher Action: Revoke Camera Button if student has camera active */}
+                    {isTeacher && isStudentActive && (student.cameraPermission === 'approved' || hasLiveVideo) && (
+                      <button
+                        onClick={() => revokeStudentCamera(student.userId)}
+                        className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 px-2 py-0.5 rounded-lg bg-rose-600/80 hover:bg-rose-600 text-[10px] font-bold text-white transition-opacity cursor-pointer shadow-md"
+                        title="Revoke camera broadcast for this student"
+                      >
+                        Revoke Cam
+                      </button>
                     )}
                   </div>
-
-                  {hasVideo && (
-                    <div className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded bg-black/60 text-[9px] text-slate-200">
-                      {student.name.split(' ')[0]}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
 
-          {/* Bottom Floating Control Bar */}
-          <div className="bg-slate-900/95 backdrop-blur-md rounded-2xl border border-slate-800 p-2 sm:p-3 flex items-center justify-center gap-2 sm:gap-4 shrink-0 shadow-2xl">
-            {/* Mic Toggle */}
+          {/* Interactive Floating Whiteboard Popup Card - Matching Screenshot 3 "Доска" */}
+          {showWhiteboard && (
+            <div className="absolute bottom-24 right-6 w-80 sm:w-96 bg-white/95 text-slate-900 rounded-3xl p-4 shadow-2xl border border-slate-200 backdrop-blur-md z-30 animate-in fade-in slide-in-from-bottom-4 duration-200">
+              <div className="flex items-center justify-between pb-2 border-b border-slate-200">
+                <div className="flex items-center gap-2">
+                  <PenTool className="w-4 h-4 text-indigo-600" />
+                  <span className="font-bold text-xs uppercase tracking-wider text-slate-800">Доска / Interactive Board</span>
+                </div>
+                <button
+                  onClick={() => setShowWhiteboard(false)}
+                  className="text-slate-400 hover:text-slate-700 text-xs font-bold cursor-pointer p-1"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Math Equation & Formula Canvas Simulation matching Screenshot 3 */}
+              <div className="p-3 my-2 bg-slate-50 border border-slate-200/80 rounded-2xl font-mono text-xs space-y-1.5">
+                <div className="text-slate-500 font-sans text-[11px] font-semibold">Решим уравнение:</div>
+                <div className="text-indigo-700 font-bold text-sm">2x + 5 = 13</div>
+                <div className="text-slate-700">2x = 13 - 5</div>
+                <div className="text-slate-700">2x = 8</div>
+                <div className="inline-block px-2 py-0.5 rounded-md bg-indigo-100 text-indigo-800 font-bold">x = 4</div>
+                
+                <div className="pt-2 text-rose-600 text-[11px] font-sans font-bold">
+                  Формула: <span className="font-mono text-xs text-slate-900">(a + b)² = a² + 2ab + b²</span>
+                </div>
+              </div>
+
+              {/* Whiteboard Toolbar from Screenshot 3 */}
+              <div className="flex items-center justify-between pt-1 text-slate-500 text-xs">
+                <div className="flex items-center gap-2">
+                  <button className="p-1.5 rounded-lg bg-indigo-50 text-indigo-600 font-bold cursor-pointer">↖</button>
+                  <button className="p-1.5 rounded-lg hover:bg-slate-100 cursor-pointer">✎ Pen</button>
+                  <button className="p-1.5 rounded-lg hover:bg-slate-100 cursor-pointer">T Text</button>
+                </div>
+                <button
+                  onClick={() => alert('Board state synchronized with classroom attendees.')}
+                  className="px-2 py-1 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 text-[10px] font-bold cursor-pointer"
+                >
+                  Sync Board
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* AI Assistant Floating Card - Matching Screenshot 3 "AI-помощник" */}
+          {showAiAssistant && (
+            <div className="absolute bottom-24 left-6 w-80 sm:w-96 bg-white/95 text-slate-900 rounded-3xl p-4 shadow-2xl border border-indigo-100 backdrop-blur-md z-30 animate-in fade-in slide-in-from-bottom-4 duration-200">
+              <div className="flex items-center justify-between pb-2 border-b border-slate-200">
+                <div className="flex items-center gap-2">
+                  <div className="w-5 h-5 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-500 flex items-center justify-center text-white text-[10px] font-bold shadow-md shadow-indigo-500/30">
+                    <Sparkles className="w-3 h-3" />
+                  </div>
+                  <span className="font-bold text-xs text-slate-900">AI-помощник / Classroom AI</span>
+                </div>
+                <button
+                  onClick={() => setShowAiAssistant(false)}
+                  className="text-slate-400 hover:text-slate-700 text-xs font-bold cursor-pointer p-1"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* AI Glowing Orb and Greeting from Screenshot 3 */}
+              <div className="flex items-center gap-3 my-3 p-3 bg-gradient-to-r from-indigo-50 to-purple-50 rounded-2xl border border-indigo-100/80">
+                <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-indigo-600 via-purple-600 to-pink-500 p-0.5 shadow-lg shadow-indigo-500/30 flex items-center justify-center shrink-0">
+                  <div className="w-full h-full rounded-full bg-indigo-950 flex items-center justify-center">
+                    <Sparkles className="w-5 h-5 text-indigo-300 animate-spin" style={{ animationDuration: '6s' }} />
+                  </div>
+                </div>
+                <div>
+                  <p className="text-[11px] font-semibold text-slate-800 leading-snug">
+                    Я помогу объяснить сложные темы и отвечу на вопросы
+                  </p>
+                  <span className="inline-flex items-center gap-1 text-[10px] text-emerald-600 font-bold mt-0.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                    Готов к помощи / Ready
+                  </span>
+                </div>
+              </div>
+
+              {/* AI Query Input & Response */}
+              <div className="space-y-2">
+                <div className="flex gap-1.5">
+                  <input
+                    type="text"
+                    value={aiQuestion}
+                    onChange={(e) => setAiQuestion(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleAskAi();
+                      }
+                    }}
+                    placeholder="Ask a question about this lesson..."
+                    className="flex-1 px-3 py-1.5 text-xs rounded-xl bg-slate-100 border border-slate-300 text-slate-900 placeholder-slate-400 focus:outline-hidden focus:border-indigo-500"
+                  />
+                  <button
+                    onClick={handleAskAi}
+                    disabled={isAiLoading || !aiQuestion.trim()}
+                    className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-bold shrink-0 cursor-pointer flex items-center gap-1 shadow-md shadow-indigo-600/20"
+                  >
+                    {isAiLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+
+                {aiAnswer && (
+                  <div className="p-3 bg-indigo-50 border border-indigo-200/80 rounded-2xl text-xs text-slate-800 max-h-48 overflow-y-auto leading-relaxed">
+                    {aiAnswer}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Bottom Floating Rounded Pill Control Bar - Matching Screenshot 3 */}
+          <div className="bg-white/95 text-slate-800 backdrop-blur-xl rounded-full border border-white/20 p-2 sm:px-6 sm:py-2.5 flex items-center justify-center gap-3 sm:gap-6 shrink-0 shadow-2xl mx-auto z-20">
+            {/* 1. Microphone Button */}
             <button
               onClick={toggleAudio}
-              className={`p-3 rounded-2xl font-bold transition-all flex items-center gap-2 cursor-pointer ${
-                isAudioMuted
-                  ? 'bg-rose-500/20 border border-rose-500/40 text-rose-300 hover:bg-rose-500/30'
-                  : 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30'
-              }`}
+              className="flex flex-col items-center gap-1 text-slate-700 hover:text-indigo-600 transition-colors cursor-pointer"
               title={isAudioMuted ? 'Unmute Microphone' : 'Mute Microphone'}
             >
-              {isAudioMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
-              <span className="text-xs hidden md:inline">{isAudioMuted ? 'Muted' : 'Speaking'}</span>
+              <div
+                className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${
+                  isAudioMuted
+                    ? 'bg-slate-100 text-slate-500'
+                    : 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
+                }`}
+              >
+                {isAudioMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+              </div>
+              <span className="text-[10px] font-semibold">Микрофон</span>
             </button>
 
-            {/* Video Toggle */}
-            <button
-              onClick={toggleVideo}
-              className={`p-3 rounded-2xl font-bold transition-all flex items-center gap-2 cursor-pointer ${
-                isVideoOff
-                  ? 'bg-slate-800 border border-slate-700 text-slate-400 hover:bg-slate-700'
-                  : 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
-              }`}
-              title={isVideoOff ? 'Start Camera' : 'Stop Camera'}
-            >
-              {isVideoOff ? <VideoOff className="w-5 h-5" /> : <Video className="w-5 h-5" />}
-              <span className="text-xs hidden md:inline">{isVideoOff ? 'Camera Off' : 'Camera On'}</span>
-            </button>
+            {/* 2. Camera Button (Teacher direct toggle / Student request flow) */}
+            {isTeacher ? (
+              <button
+                onClick={toggleVideo}
+                className="flex flex-col items-center gap-1 text-slate-700 hover:text-indigo-600 transition-colors cursor-pointer"
+                title={isVideoOff ? 'Start Camera' : 'Stop Camera'}
+              >
+                <div
+                  className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${
+                    isVideoOff
+                      ? 'bg-slate-100 text-slate-500'
+                      : 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
+                  }`}
+                >
+                  {isVideoOff ? <VideoOff className="w-4 h-4" /> : <Video className="w-4 h-4" />}
+                </div>
+                <span className="text-[10px] font-semibold">Камера</span>
+              </button>
+            ) : (
+              <button
+                onClick={() => {
+                  if (myCameraStatus === 'approved') {
+                    toggleVideo();
+                  } else if (myCameraStatus === 'requested') {
+                    alert('Your camera request has been submitted to the teacher. Please wait for approval.');
+                  } else {
+                    requestCameraPermission();
+                  }
+                }}
+                className="flex flex-col items-center gap-1 text-slate-700 hover:text-indigo-600 transition-colors cursor-pointer"
+                title={
+                  myCameraStatus === 'approved'
+                    ? isVideoOff
+                      ? 'Start Camera'
+                      : 'Stop Camera'
+                    : myCameraStatus === 'requested'
+                    ? 'Camera request pending teacher approval'
+                    : 'Request permission to broadcast camera'
+                }
+              >
+                <div
+                  className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${
+                    myCameraStatus === 'approved' && !isVideoOff
+                      ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30'
+                      : myCameraStatus === 'requested'
+                      ? 'bg-amber-100 text-amber-700 border border-amber-300 animate-pulse'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  {myCameraStatus === 'requested' ? (
+                    <RefreshCw className="w-4 h-4 animate-spin text-amber-600" />
+                  ) : myCameraStatus === 'approved' && !isVideoOff ? (
+                    <Video className="w-4 h-4" />
+                  ) : (
+                    <Camera className="w-4 h-4" />
+                  )}
+                </div>
+                <span className="text-[10px] font-semibold">
+                  {myCameraStatus === 'approved'
+                    ? !isVideoOff
+                      ? 'Камера вкл'
+                      : 'Камера'
+                    : myCameraStatus === 'requested'
+                    ? 'Ожидание...'
+                    : 'Запрос камеры'}
+                </span>
+              </button>
+            )}
 
-            {/* Screen Share (Teacher Only) */}
+            {/* 3. Screen Share (Teacher Only) */}
             {isTeacher && (
               <button
                 onClick={toggleScreenShare}
-                className={`p-3 rounded-2xl font-bold transition-all flex items-center gap-2 cursor-pointer ${
-                  isScreenSharing
-                    ? 'bg-amber-600 text-slate-950 shadow-md shadow-amber-600/30'
-                    : 'bg-slate-800 border border-slate-700 text-slate-300 hover:bg-slate-700'
-                }`}
+                className="flex flex-col items-center gap-1 text-slate-700 hover:text-amber-600 transition-colors cursor-pointer"
                 title="Share Screen Presentation"
               >
-                <ScreenShare className="w-5 h-5" />
-                <span className="text-xs hidden md:inline">
-                  {isScreenSharing ? 'Stop Share' : 'Share Screen'}
-                </span>
+                <div
+                  className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${
+                    isScreenSharing
+                      ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/30'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  <ScreenShare className="w-4 h-4" />
+                </div>
+                <span className="text-[10px] font-semibold">Экран</span>
               </button>
             )}
 
-            {/* Raise Hand (Student Only) */}
-            {!isTeacher && (
-              <button
-                onClick={handleRaiseHand}
-                className={`p-3 rounded-2xl font-bold transition-all flex items-center gap-2 cursor-pointer ${
-                  hasRaisedHand
-                    ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/30 animate-pulse'
-                    : 'bg-slate-800 border border-slate-700 text-slate-300 hover:bg-slate-700'
-                }`}
-                title={hasRaisedHand ? 'Lower Hand' : 'Raise Hand to Ask Question'}
-              >
-                <Hand className="w-5 h-5" />
-                <span className="text-xs hidden sm:inline">
-                  {hasRaisedHand ? 'Hand Raised' : 'Raise Hand'}
-                </span>
-              </button>
-            )}
-
-            {/* Announcement Button (Teacher Only) */}
-            {isTeacher && (
-              <button
-                onClick={() => setShowAnnouncementBox(!showAnnouncementBox)}
-                className="p-3 rounded-2xl bg-slate-800 border border-slate-700 text-indigo-300 hover:bg-slate-700 font-bold transition-all flex items-center gap-2 cursor-pointer"
-                title="Post Classroom Announcement"
-              >
-                <Megaphone className="w-5 h-5" />
-                <span className="text-xs hidden md:inline">Announce</span>
-              </button>
-            )}
-
-            {/* Refresh Camera/Mic Button */}
+            {/* 4. Whiteboard / Доска Toggle Button */}
             <button
-              onClick={() => initMedia()}
-              className="p-3 rounded-2xl bg-slate-800/80 hover:bg-slate-700 border border-slate-700 text-slate-400 hover:text-white transition-all cursor-pointer"
-              title="Refresh Camera and Microphone Devices"
+              onClick={() => setShowWhiteboard(!showWhiteboard)}
+              className="flex flex-col items-center gap-1 text-slate-700 hover:text-indigo-600 transition-colors cursor-pointer"
+              title="Open Interactive Whiteboard"
             >
-              <RefreshCw className="w-4 h-4" />
+              <div
+                className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${
+                  showWhiteboard ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                <PenTool className="w-4 h-4" />
+              </div>
+              <span className="text-[10px] font-semibold">Доска</span>
+            </button>
+
+            {/* 5. AI-помощник Toggle Button */}
+            <button
+              onClick={() => setShowAiAssistant(!showAiAssistant)}
+              className="flex flex-col items-center gap-1 text-slate-700 hover:text-purple-600 transition-colors cursor-pointer"
+              title="Open AI Assistant"
+            >
+              <div
+                className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${
+                  showAiAssistant
+                    ? 'bg-gradient-to-tr from-indigo-600 to-purple-600 text-white shadow-md shadow-indigo-600/30'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                <Bot className="w-4 h-4" />
+              </div>
+              <span className="text-[10px] font-semibold">AI</span>
+            </button>
+
+            {/* 6. Leave / End Call Button - Red circle from Screenshot 3 */}
+            <button
+              onClick={isTeacher ? handleEndClass : handleLeaveClass}
+              className="flex flex-col items-center gap-1 transition-colors cursor-pointer"
+              title={isTeacher ? 'End Call for Everyone' : 'Leave Call'}
+            >
+              <div className="w-10 h-10 rounded-full bg-rose-600 hover:bg-rose-700 text-white flex items-center justify-center shadow-lg shadow-rose-600/30 transition-all">
+                <PhoneOff className="w-4 h-4" />
+              </div>
+              <span className="text-[10px] font-semibold text-rose-600">Выйти</span>
             </button>
           </div>
         </div>
 
-        {/* Right: Interaction Sidebar (Chat, Participants, Raised Hands) */}
+        {/* Right: Interaction Sidebar (Chat, Participants, Raised Hands, Camera Requests) */}
         <div className="w-80 sm:w-96 bg-slate-900 border-l border-slate-800 flex flex-col shrink-0">
           {/* Sidebar Tab Header */}
           <div className="h-12 border-b border-slate-800 flex items-center justify-around px-2 bg-slate-900/60">
@@ -1585,7 +1940,7 @@ export const LiveClassroom: React.FC<LiveClassroomProps> = ({ lesson, onLeave })
               }`}
             >
               <MessageSquare className="w-3.5 h-3.5" />
-              <span>Chat & Q&A</span>
+              <span>Chat</span>
             </button>
 
             <button
@@ -1601,17 +1956,31 @@ export const LiveClassroom: React.FC<LiveClassroomProps> = ({ lesson, onLeave })
             </button>
 
             {isTeacher && (
-              <button
-                onClick={() => setActiveSideTab('hands')}
-                className={`flex items-center gap-1.5 py-2 px-3 text-xs font-semibold rounded-xl transition-all cursor-pointer ${
-                  activeSideTab === 'hands'
-                    ? 'bg-amber-600 text-slate-950 font-bold shadow-xs'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                <Hand className="w-3.5 h-3.5" />
-                <span>Hands ({raisedHands.length})</span>
-              </button>
+              <>
+                <button
+                  onClick={() => setActiveSideTab('hands')}
+                  className={`flex items-center gap-1.5 py-2 px-3 text-xs font-semibold rounded-xl transition-all cursor-pointer ${
+                    activeSideTab === 'hands'
+                      ? 'bg-amber-600 text-slate-950 font-bold shadow-xs'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Hand className="w-3.5 h-3.5" />
+                  <span>Hands ({raisedHands.length})</span>
+                </button>
+
+                <button
+                  onClick={() => setActiveSideTab('camera')}
+                  className={`flex items-center gap-1.5 py-2 px-3 text-xs font-semibold rounded-xl transition-all cursor-pointer ${
+                    activeSideTab === 'camera'
+                      ? 'bg-emerald-600 text-white font-bold shadow-xs'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Camera className="w-3.5 h-3.5" />
+                  <span>Cams ({cameraRequests.length})</span>
+                </button>
+              </>
             )}
           </div>
 
@@ -1831,6 +2200,60 @@ export const LiveClassroom: React.FC<LiveClassroomProps> = ({ lesson, onLeave })
                         className="py-1.5 px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold rounded-xl text-xs cursor-pointer"
                       >
                         Dismiss
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+
+          {/* Content: Tab 4 - Student Camera Requests (Teacher View) */}
+          {activeSideTab === 'camera' && isTeacher && (
+            <div className="flex-1 p-3 overflow-y-auto space-y-3 text-xs">
+              <div className="text-[11px] font-bold text-emerald-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                <Camera className="w-3.5 h-3.5" />
+                Student Camera Requests ({cameraRequests.length})
+              </div>
+
+              {cameraRequests.length === 0 ? (
+                <div className="py-12 text-center text-slate-500 text-xs">
+                  No pending student camera access requests.
+                </div>
+              ) : (
+                cameraRequests.map((req) => (
+                  <div
+                    key={req.id}
+                    className="p-3 rounded-2xl bg-emerald-950/30 border border-emerald-800/50 space-y-2"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="font-bold text-emerald-200">{req.studentName}</div>
+                        <div className="text-[10px] text-slate-400">
+                          {req.grade} • {req.section}
+                        </div>
+                      </div>
+                      <span className="text-[10px] text-slate-400">
+                        {new Date(req.timestamp).toLocaleTimeString([], {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2 pt-2 border-t border-emerald-900/40">
+                      <button
+                        onClick={() => approveStudentCamera(req.studentId)}
+                        className="flex-1 py-1.5 px-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1 cursor-pointer shadow-md shadow-emerald-600/20"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                        Approve Camera
+                      </button>
+                      <button
+                        onClick={() => rejectStudentCamera(req.studentId)}
+                        className="py-1.5 px-3 bg-slate-800 hover:bg-rose-950/60 hover:text-rose-300 text-slate-300 font-semibold rounded-xl text-xs cursor-pointer border border-slate-700"
+                      >
+                        Decline
                       </button>
                     </div>
                   </div>

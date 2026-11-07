@@ -13,6 +13,40 @@ import { StudentDashboard } from './components/student/StudentDashboard.tsx';
 import { DirectorLogin } from './components/director/DirectorLogin.tsx';
 import { DirectorDashboard } from './components/director/DirectorDashboard.tsx';
 
+interface ProtectedRouteProps {
+  allowedRoles: Array<'super_admin' | 'admin' | 'director' | 'teacher' | 'student'>;
+  fallbackPath: string;
+  children: React.ReactNode;
+}
+
+const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ allowedRoles, fallbackPath, children }) => {
+  const { currentUser, loading } = useAuth();
+  const { navigate } = useRouter();
+
+  React.useEffect(() => {
+    if (!loading) {
+      if (!currentUser || !allowedRoles.includes(currentUser.role as any)) {
+        navigate(fallbackPath);
+      }
+    }
+  }, [currentUser, loading, allowedRoles, fallbackPath, navigate]);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-900 text-white flex flex-col items-center justify-center p-4">
+        <div className="w-12 h-12 border-3 border-indigo-500 border-t-transparent rounded-full animate-spin mb-4" />
+        <div className="text-sm font-semibold tracking-wide">Validating Authorization...</div>
+      </div>
+    );
+  }
+
+  if (!currentUser || !allowedRoles.includes(currentUser.role as any)) {
+    return null;
+  }
+
+  return <>{children}</>;
+};
+
 const AppRoutes: React.FC = () => {
   const { path } = useRouter();
   const { loading } = useAuth();
@@ -27,28 +61,44 @@ const AppRoutes: React.FC = () => {
     );
   }
 
-  // Exact path matching for separate portals
+  // Exact path matching with strict role boundaries
   switch (path) {
     case '/admin/login':
       return <AdminLogin />;
     case '/admin/dashboard':
-      return <AdminDashboard />;
+      return (
+        <ProtectedRoute allowedRoles={['admin', 'super_admin']} fallbackPath="/admin/login">
+          <AdminDashboard />
+        </ProtectedRoute>
+      );
     case '/director/login':
       return <DirectorLogin />;
     case '/director/dashboard':
-      return <DirectorDashboard />;
+      return (
+        <ProtectedRoute allowedRoles={['director', 'admin', 'super_admin']} fallbackPath="/director/login">
+          <DirectorDashboard />
+        </ProtectedRoute>
+      );
     case '/teacher/login':
       return <TeacherLogin />;
     case '/teacher/register':
       return <TeacherRegister />;
     case '/teacher/dashboard':
-      return <TeacherDashboard />;
+      return (
+        <ProtectedRoute allowedRoles={['teacher', 'admin', 'super_admin']} fallbackPath="/teacher/login">
+          <TeacherDashboard />
+        </ProtectedRoute>
+      );
     case '/student/register':
       return <StudentRegister />;
     case '/student/login':
       return <StudentLogin />;
     case '/student/dashboard':
-      return <StudentDashboard />;
+      return (
+        <ProtectedRoute allowedRoles={['student']} fallbackPath="/student/login">
+          <StudentDashboard />
+        </ProtectedRoute>
+      );
     default:
       return <PortalGateway />;
   }

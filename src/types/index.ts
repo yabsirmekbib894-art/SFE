@@ -67,9 +67,37 @@ export interface Question {
   type: QuestionType;
   questionText: string;
   options?: QuestionOption[]; // Stable options with unique IDs
-  correctAnswer: string; // Option ID for MC (e.g. "opt_A"), "True"/"False" for TF, or grading rubric for short answer
+  correctAnswer?: string; // Stored separately in answerKeys/{examId} and never sent to students
   marks: number;
   explanation?: string;
+  needsReview?: boolean; // Flagged if AI extraction could not verify the answer with 100% confidence
+}
+
+export interface ExamAnswerKey {
+  examId: string;
+  teacherId: string;
+  answers: Record<string, {
+    correctAnswer: string;
+    marks: number;
+    type: QuestionType;
+    explanation?: string;
+  }>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ExamAttempt {
+  id: string;
+  examId: string;
+  studentId: string;
+  studentName: string;
+  startedAt: number; // Server timestamp in milliseconds
+  durationMinutes: number;
+  deadlineTimestamp: number; // startedAt + (duration * 60 * 1000)
+  tabSwitchCount: number;
+  fullscreenExitCount: number;
+  submitted: boolean;
+  submittedAt?: string;
 }
 
 export type ExamStatus = 'draft' | 'scheduled' | 'published' | 'closed' | 'completed' | 'archived';
@@ -92,7 +120,8 @@ export interface Exam {
   publishedAt?: string;
   resultsReleased: boolean;
   questionsCount?: number;
-  questions?: Question[];
+  questions?: Question[]; // When fetched by students, correctAnswer is strictly omitted
+  hasAnswerKey?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -166,7 +195,19 @@ export interface ClassroomParticipant {
   screenTrackId?: string;
   canSpeak: boolean; // True if approved by teacher
   hasHandRaised: boolean;
+  cameraPermission?: 'none' | 'requested' | 'approved' | 'rejected';
   joinedAt: string;
+}
+
+export interface CameraAccessRequest {
+  id: string;
+  lessonId: string;
+  studentId: string;
+  studentName: string;
+  grade: string;
+  section: string;
+  timestamp: string;
+  status: 'pending' | 'approved' | 'rejected';
 }
 
 export interface AppNotification {

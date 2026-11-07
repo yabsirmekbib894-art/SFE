@@ -29,7 +29,9 @@ import {
   Bell,
   Check,
   ChevronRight,
-  Sparkles
+  Sparkles,
+  TrendingUp,
+  RefreshCw
 } from 'lucide-react';
 
 export type StudentExamSubTab = 'available' | 'upcoming' | 'active' | 'completed' | 'results';
@@ -287,6 +289,210 @@ export const StudentDashboard: React.FC = () => {
             <div className="bg-emerald-50/60 dark:bg-emerald-950/40 px-4 py-2.5 rounded-2xl border border-emerald-200 dark:border-emerald-800 text-center">
               <span className="text-[10px] text-emerald-600 font-semibold uppercase block">Average Score</span>
               <span className="text-lg font-bold text-emerald-700 dark:text-emerald-400">{averageGrade}%</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Screenshot 4: Prep Central / Smart Exam System Dashboard Suite */}
+        <div className="bg-[#0e131f] text-slate-100 rounded-3xl border border-slate-800/80 p-6 sm:p-8 space-y-6 shadow-xl">
+          {/* Top Bar with Greeting & Controls */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-800">
+            <div>
+              <div className="text-[11px] font-bold text-amber-400 uppercase tracking-wider mb-1 flex items-center gap-1.5">
+                <span>⚡</span> Prep Central • Smart Exam System
+              </div>
+              <h2 className="text-2xl font-extrabold text-white">
+                Hello {currentUser?.name?.split(' ')[0] || 'Student'}
+              </h2>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => alert('Tour guide: Check Available Examinations below to take tests, or Live Classrooms to join interactive video lectures with your teacher.')}
+                className="px-3.5 py-1.5 rounded-xl bg-slate-800/80 hover:bg-slate-750 border border-slate-700 text-xs font-semibold text-slate-300 flex items-center gap-1.5 cursor-pointer"
+              >
+                <span>Tour</span>
+              </button>
+              <button
+                onClick={() => window.location.reload()}
+                className="p-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold shadow-md shadow-amber-500/20 cursor-pointer"
+                title="Refresh student records"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+
+          {/* 3 Overview Cards from Screenshot 4 */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* 1. Exams Taken */}
+            <div className="bg-[#141b2d] p-5 rounded-2xl border border-slate-800 flex items-center justify-between">
+              <div>
+                <span className="text-xs font-semibold text-slate-400 block mb-1">Exams Taken</span>
+                <span className="text-3xl font-extrabold text-white">{mySubmissions.length}</span>
+              </div>
+              <div className="w-12 h-12 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-400 flex items-center justify-center">
+                <FileText className="w-6 h-6" />
+              </div>
+            </div>
+
+            {/* 2. Average Score */}
+            <div className="bg-[#141b2d] p-5 rounded-2xl border border-slate-800 flex items-center justify-between">
+              <div>
+                <span className="text-xs font-semibold text-slate-400 block mb-1">Average Score</span>
+                <span className="text-3xl font-extrabold text-white">{averageGrade}%</span>
+              </div>
+              <div className="w-12 h-12 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center">
+                <TrendingUp className="w-6 h-6" />
+              </div>
+            </div>
+
+            {/* 3. Study Hours */}
+            <div className="bg-[#141b2d] p-5 rounded-2xl border border-slate-800 flex items-center justify-between">
+              <div>
+                <span className="text-xs font-semibold text-slate-400 block mb-1">Study Hours</span>
+                <span className="text-3xl font-extrabold text-white">
+                  {mySubmissions.length > 0 ? (mySubmissions.length * 1.5).toFixed(1) : '14.2'}
+                </span>
+              </div>
+              <div className="w-12 h-12 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-400 flex items-center justify-center">
+                <Clock className="w-6 h-6" />
+              </div>
+            </div>
+          </div>
+
+          {/* Activity & Quick Actions from Screenshot 4 */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            {/* Left: Activity (7 Cols) */}
+            <div className="lg:col-span-7 bg-[#141b2d] p-5 rounded-2xl border border-slate-800 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-white uppercase tracking-wider">Activity</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] px-2.5 py-1 rounded-lg bg-slate-800 border border-slate-700 text-slate-300">
+                    All Scopes
+                  </span>
+                  <span className="text-[11px] px-2.5 py-1 rounded-lg bg-slate-800 border border-slate-700 text-slate-300">
+                    All Risks
+                  </span>
+                </div>
+              </div>
+
+              {mySubmissions.length === 0 ? (
+                <div className="py-10 text-center text-slate-500 text-xs">
+                  No audit entries found. Start an examination below to record test activity.
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {mySubmissions.slice(0, 3).map((sub) => (
+                    <div
+                      key={sub.id}
+                      className="p-3 bg-slate-900/80 rounded-xl border border-slate-800 flex items-center justify-between text-xs"
+                    >
+                      <div>
+                        <div className="font-bold text-white">{sub.examTitle}</div>
+                        <div className="text-[10px] text-slate-400">
+                          {sub.subject} • Submitted on {new Date(sub.submittedAt || sub.createdAt).toLocaleDateString()}
+                        </div>
+                      </div>
+                      <span className="font-mono font-bold text-emerald-400">
+                        {sub.score} / {sub.totalPossible}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Right: Quick Actions 2x2 Grid (5 Cols) */}
+            <div className="lg:col-span-5 bg-[#141b2d] p-5 rounded-2xl border border-slate-800 space-y-3">
+              <span className="text-xs font-bold text-white uppercase tracking-wider block">Quick Actions</span>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  onClick={() => {
+                    setMainTab('exams');
+                    setExamSubTab('available');
+                  }}
+                  className="p-3.5 rounded-xl bg-slate-900/90 hover:bg-slate-850 border border-slate-800 text-left flex flex-col justify-between space-y-2 transition-all cursor-pointer group hover:border-amber-500/40"
+                >
+                  <FileText className="w-5 h-5 text-amber-400 group-hover:scale-110 transition-transform" />
+                  <span className="text-xs font-bold text-white">Start New Exam</span>
+                </button>
+
+                <button
+                  onClick={() => setMainTab('live_learning')}
+                  className="p-3.5 rounded-xl bg-slate-900/90 hover:bg-slate-850 border border-slate-800 text-left flex flex-col justify-between space-y-2 transition-all cursor-pointer group hover:border-rose-500/40"
+                >
+                  <Video className="w-5 h-5 text-rose-400 group-hover:scale-110 transition-transform" />
+                  <span className="text-xs font-bold text-white">Live Classroom</span>
+                </button>
+
+                <button
+                  onClick={() => setChangePasswordModalOpen(true)}
+                  className="p-3.5 rounded-xl bg-slate-900/90 hover:bg-slate-850 border border-slate-800 text-left flex flex-col justify-between space-y-2 transition-all cursor-pointer group hover:border-blue-500/40"
+                >
+                  <Key className="w-5 h-5 text-blue-400 group-hover:scale-110 transition-transform" />
+                  <span className="text-xs font-bold text-white">Security & Pass</span>
+                </button>
+
+                <button
+                  onClick={() => setIsNotificationsOpen(true)}
+                  className="p-3.5 rounded-xl bg-slate-900/90 hover:bg-slate-850 border border-slate-800 text-left flex flex-col justify-between space-y-2 transition-all cursor-pointer group hover:border-emerald-500/40"
+                >
+                  <Bell className="w-5 h-5 text-emerald-400 group-hover:scale-110 transition-transform" />
+                  <span className="text-xs font-bold text-white">Notifications</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Performance Section from Screenshot 4 */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 pt-2">
+            {/* Weekly Performance Line Chart */}
+            <div className="bg-[#141b2d] p-5 rounded-2xl border border-slate-800 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-white uppercase tracking-wider">Weekly Performance</span>
+                <span className="text-[11px] px-2.5 py-1 rounded-lg bg-slate-800 border border-slate-700 text-slate-300">
+                  Line ▾
+                </span>
+              </div>
+              <div className="h-36 flex items-end justify-around pt-4 pb-2 border-b border-l border-slate-800">
+                {[
+                  { week: 'W1', score: '60%' },
+                  { week: 'W2', score: '72%' },
+                  { week: 'W3', score: '80%' },
+                  { week: 'W4', score: '88%' },
+                  { week: 'W5', score: '92%' },
+                ].map((w) => (
+                  <div key={w.week} className="flex flex-col items-center gap-1.5">
+                    <div style={{ height: w.score }} className="w-2.5 bg-gradient-to-t from-amber-500 to-amber-300 rounded-t-full shadow-md" />
+                    <span className="text-[10px] text-slate-500">{w.week}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Subject Performance Bar Chart */}
+            <div className="bg-[#141b2d] p-5 rounded-2xl border border-slate-800 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-white uppercase tracking-wider">Subject Performance</span>
+                <span className="text-[11px] px-2.5 py-1 rounded-lg bg-slate-800 border border-slate-700 text-slate-300">
+                  Bar ▾
+                </span>
+              </div>
+              <div className="h-36 flex items-end justify-around pt-4 pb-2 border-b border-l border-slate-800">
+                {[
+                  { subject: 'Math', pct: '85%' },
+                  { subject: 'Chem', pct: '78%' },
+                  { subject: 'Phys', pct: '90%' },
+                  { subject: 'Bio', pct: '82%' },
+                  { subject: 'Eng', pct: '94%' },
+                ].map((s) => (
+                  <div key={s.subject} className="flex flex-col items-center gap-1.5">
+                    <div style={{ height: s.pct }} className="w-4 bg-gradient-to-t from-blue-600 to-cyan-400 rounded-t-md shadow-md" />
+                    <span className="text-[10px] text-slate-500">{s.subject}</span>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         </div>

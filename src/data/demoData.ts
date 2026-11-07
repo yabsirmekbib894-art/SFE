@@ -18,12 +18,12 @@ export const DEFAULT_SCHOOL_SETTINGS: SchoolSettings = {
 // Initial school Super Administrator account
 export const DEFAULT_ADMIN: UserProfile = {
   id: 'admin_super',
-  username: 'sfe',
+  username: 'shcool',
   name: 'Super Administrator',
-  email: 'sfe@smartexam.edu',
+  email: 'admin@excellence.edu.et',
   role: 'super_admin',
   status: 'active',
-  temporaryPassword: 'sfe2027',
+  temporaryPassword: '1996',
   createdAt: '2026-09-01T08:00:00Z',
   updatedAt: new Date().toISOString(),
 };
@@ -31,12 +31,12 @@ export const DEFAULT_ADMIN: UserProfile = {
 // Initial School Director account
 export const DEFAULT_DIRECTOR: UserProfile = {
   id: 'director_abebe',
-  username: 'director.abebe',
+  username: 'Di1996T',
   name: 'Dr. Abebe Tefera',
   email: 'director@excellence.edu.et',
   role: 'director',
   status: 'active',
-  temporaryPassword: 'Director@2026',
+  temporaryPassword: 'd2017t',
   phone: '+251 91 123 4567',
   createdAt: '2026-09-02T08:00:00Z',
   updatedAt: new Date().toISOString(),

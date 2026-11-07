@@ -204,6 +204,66 @@
         }
       },
       "required": ["id", "examId", "studentId", "status"]
+    },
+    "AnswerKey": {
+      "title": "AnswerKey",
+      "description": "Isolated answer key documents accessible only by author teachers and administrators",
+      "type": "object",
+      "properties": {
+        "examId": {
+          "type": "string",
+          "description": "Referenced examination identifier"
+        },
+        "teacherId": {
+          "type": "string",
+          "description": "Teacher UID who authored the exam"
+        },
+        "answers": {
+          "type": "object",
+          "description": "Map of question ID to correct answer and rubric"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "ISO update timestamp"
+        }
+      },
+      "required": ["examId", "teacherId", "answers"]
+    },
+    "ExamAttempt": {
+      "title": "ExamAttempt",
+      "description": "Server-authoritative student exam attempt timer and integrity event logs",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Attempt identifier"
+        },
+        "examId": {
+          "type": "string",
+          "description": "Exam identifier"
+        },
+        "studentId": {
+          "type": "string",
+          "description": "Student user ID"
+        },
+        "startedAt": {
+          "type": "number",
+          "description": "Server timestamp of exam start"
+        },
+        "deadlineTimestamp": {
+          "type": "number",
+          "description": "Calculated server deadline timestamp"
+        },
+        "submitted": {
+          "type": "boolean",
+          "description": "Whether attempt has been submitted"
+        }
+      },
+      "required": ["id", "examId", "studentId", "startedAt"]
     }
   },
   "firestore": {
@@ -223,11 +283,23 @@
       "schema": "Question",
       "description": "Questions sub-collection within each exam"
     },
+    "/answerKeys/{examId}": {
+      "schema": {
+        "$ref": "AnswerKey"
+      },
+      "description": "Protected answer key storage isolated from students"
+    },
     "/submissions/{submissionId}": {
       "schema": {
         "$ref": "ExamSubmission"
       },
       "description": "Student exam submissions and scores"
+    },
+    "/examAttempts/{attemptId}": {
+      "schema": {
+        "$ref": "ExamAttempt"
+      },
+      "description": "Student attempt records and server-side timer integrity"
     }
   }
 }
